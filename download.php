@@ -212,12 +212,28 @@ if (isset($_GET['type']) && $_GET['type'] === 'metadata') {
     
     // Build a canonical URL from the validated ID only (prevents command injection).
     $safeUrl = 'https://www.youtube.com/watch?v=' . $videoId;
-    $command = escapeshellarg($yt_dlp)
-        . ' --dump-json --no-playlist --no-check-certificate --no-warnings --no-update '
-        . escapeshellarg($safeUrl) . ' 2>&1';
     
     $output = [];
-    exec($command, $output, $status);
+    $status = 1;
+
+$arguments = [
+    '--dump-single-json',
+    '--no-playlist',
+    '--no-check-certificate',
+    '--no-warnings',
+    '--no-update',
+    '--js-runtimes',
+    'deno',
+    '--remote-components',
+    'ejs:github',
+    $safeUrl,
+];
+
+runYtDlp($arguments, $output, $status);
+
+if ($status !== 0) {
+    error_log('yt-dlp metadata failed (exit ' . $status . '): ' . implode("\n", $output));
+}
     
     // Warnings may be mixed into the same stream, so pick the JSON line.
     $jsonLine = null;
