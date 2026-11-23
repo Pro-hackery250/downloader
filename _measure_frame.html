@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  html, body { margin: 0; background: #fff; }
+  iframe { display: block; width: 1440px; height: 7000px; border: 0; }
+  #out { position: absolute; left: 0; top: 0; opacity: 0; }
+</style>
+</head>
+<body>
+<iframe id="frame" src="index.php" scrolling="no"></iframe>
+<pre id="out">pending</pre>
+<script>
+document.getElementById('frame').addEventListener('load', function () {
+  setTimeout(function () {
+    var d = document.getElementById('frame').contentDocument;
+    var w = document.getElementById('frame').contentWindow;
+    var out = [];
+    d.querySelectorAll('main > section, .site-footer').forEach(function (s) {
+      var cs = w.getComputedStyle(s);
+      var r = s.getBoundingClientRect();
+      out.push({
+        cls: s.className,
+        id: s.id,
+        top: Math.round(r.top + w.scrollY),
+        height: Math.round(r.height),
+        padTop: cs.paddingTop,
+        padBottom: cs.paddingBottom
+      });
+    });
+    var detail = {};
+    ['features', 'how-it-works', 'experience', 'reviews', 'faq'].forEach(function (id) {
+      var s = d.getElementById(id);
+      if (!s) return;
+      var r = s.getBoundingClientRect();
+      var head = s.querySelector('.section-head, .showcase-copy');
+      var grid = s.querySelector('.features-grid, .steps, .showcase');
+      detail[id] = {
+        top: Math.round(r.top + w.scrollY),
+        height: Math.round(r.height),
+        headTop: head ? Math.round(head.getBoundingClientRect().top + w.scrollY) : null,
+        headHeight: head ? Math.round(head.getBoundingClientRect().height) : null,
+        gridTop: grid ? Math.round(grid.getBoundingClientRect().top + w.scrollY) : null,
+        gridHeight: grid ? Math.round(grid.getBoundingClientRect().height) : null
+      };
+    });
+    document.getElementById('out').textContent = JSON.stringify({
+      width: w.innerWidth,
+      pageHeight: d.documentElement.scrollHeight,
+      sections: out,
+      detail: detail
+    });
+  }, 1200);
+});
+</script>
+</body>
+</html>

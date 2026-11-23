@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  html, body { margin: 0; background: #fff; }
+  iframe { display: block; border: 0; width: 390px; height: 6000px; }
+  #m768 { width: 768px; height: 6000px; }
+  #out { position: absolute; left: 0; top: 0; opacity: 0; }
+</style>
+</head>
+<body>
+<iframe id="m390" src="index.php" scrolling="no"></iframe>
+<iframe id="m768" src="index.php" scrolling="no"></iframe>
+<pre id="out">pending</pre>
+<script>
+function measure(frame) {
+  var d = frame.contentDocument;
+  var w = frame.contentWindow;
+  var vw = w.innerWidth;
+  var overflows = [];
+  d.querySelectorAll('body *').forEach(function (el) {
+    var cs = w.getComputedStyle(el);
+    if (cs.position === 'fixed' || cs.display === 'none' || el.closest('.bg-fx') || el.closest('.marquee')) return;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return;
+    if (r.right > vw + 1 || r.left < -1) {
+      overflows.push({ tag: el.tagName, cls: (el.className || '').toString().slice(0, 60), left: Math.round(r.left), right: Math.round(r.right) });
+    }
+  });
+  function rect(sel) {
+    var el = d.querySelector(sel);
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return { top: Math.round(r.top + w.scrollY), width: Math.round(r.width), height: Math.round(r.height) };
+  }
+  return {
+    vw: vw,
+    docScrollWidth: d.documentElement.scrollWidth,
+    bodyScrollWidth: d.body.scrollWidth,
+    overflowCount: overflows.length,
+    overflows: overflows.slice(0, 12),
+    navToggle: rect('.nav-toggle'),
+    navLinksDisplay: d.querySelector('.nav-links') ? w.getComputedStyle(d.querySelector('.nav-links')).display : null,
+    h1: rect('.hero h1'),
+    search: rect('.search-shell'),
+    searchButton: rect('.searc'),
+    stats: rect('.stats-band'),
+    statCols: d.querySelector('.stats-band') ? w.getComputedStyle(d.querySelector('.stats-band')).gridTemplateColumns : null,
+    featuresCols: d.querySelector('.features-grid') ? w.getComputedStyle(d.querySelector('.features-grid')).gridTemplateColumns : null,
+    stepsCols: d.querySelector('.steps') ? w.getComputedStyle(d.querySelector('.steps')).gridTemplateColumns : null,
+    reviewsCols: d.querySelector('.reviews-grid') ? w.getComputedStyle(d.querySelector('.reviews-grid')).gridTemplateColumns : null,
+    showcaseCols: d.querySelector('.showcase') ? w.getComputedStyle(d.querySelector('.showcase')).gridTemplateColumns : null,
+    footerCols: d.querySelector('.footer-grid') ? w.getComputedStyle(d.querySelector('.footer-grid')).gridTemplateColumns : null,
+    downloadCols: d.querySelector('.download-buttons') ? w.getComputedStyle(d.querySelector('.download-buttons')).gridTemplateColumns : null,
+    pageHeight: d.documentElement.scrollHeight
+  };
+}
+var done = 0;
+function ready() {
+  done++;
+  if (done < 2) return;
+  var result = {
+    m390: measure(document.getElementById('m390')),
+    m768: measure(document.getElementById('m768'))
+  };
+  document.getElementById('out').textContent = JSON.stringify(result);
+}
+document.getElementById('m390').addEventListener('load', ready);
+document.getElementById('m768').addEventListener('load', ready);
+</script>
+</body>
+</html>
