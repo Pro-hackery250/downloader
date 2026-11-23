@@ -1,5 +1,5 @@
 <?php
-// download.php - Optimized download handler
+// download.php - Optimized download handlerh
 
 // --------------------
 // CONFIGURATION - UPDATED PATH
