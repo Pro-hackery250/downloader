@@ -4,21 +4,49 @@
 // --------------------
 // CONFIGURATION - UPDATED PATH
 // --------------------
-$yt_dlp = "C:\\xampp\\htdocs\\website\\downloader-main\\yt-dlp.exe"; // Updated to your correct path
-$downloadsDir = __DIR__ . "/downloads"; // This will be C:\xampp\htdocs\website\downloader-main\downloads
+$yt_dlp = '/usr/local/bin/yt-dlp'; // Linux executable installed by the Render Dockerfile
+$downloadsDir = __DIR__ . '/downloads'; // Temporary container storage on Render
 $maxFileAge = 3600; // Delete files older than 1 hour
 
 // Create downloads directory if it doesn't exist
-if (!file_exists($downloadsDir)) {
-    mkdir($downloadsDir, 0777, true);
+if (!is_dir($downloadsDir) && !mkdir($downloadsDir, 0755, true) && !is_dir($downloadsDir)) {
+    http_response_code(500);
+    die('Download storage is unavailable.');
+}
+if (!is_writable($downloadsDir)) {
+    http_response_code(500);
+    die('Download storage is not writable.');
 }
 
 // Clean old files
 cleanOldFiles($downloadsDir, $maxFileAge);
 
-// Enable error reporting for debugging (remove in production)
+/**
+ * Run yt-dlp with individually escaped arguments.
+ */
+function runYtDlp(array $arguments, &$output = [], &$status = 1) {
+    global $yt_dlp;
+
+    if (!is_file($yt_dlp) || !is_executable($yt_dlp)) {
+        $output = ['yt-dlp executable is missing or not executable: ' . $yt_dlp];
+        $status = 127;
+        return false;
+    }
+
+    $parts = [escapeshellarg($yt_dlp)];
+    foreach ($arguments as $argument) {
+        $parts[] = escapeshellarg((string)$argument);
+    }
+
+    exec(implode(' ', $parts) . ' 2>&1', $output, $status);
+    return $status === 0;
+}
+
+
+// Log PHP errors to Render logs without exposing server details to visitors.
 error_reporting(E_ALL);
-ini_set('display_errors', 1);
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
 
 // --------------------
 // AUDIOMACK HELPERS
@@ -356,7 +384,12 @@ if ($platform === 'audiomack') {
     $outputFile = "$downloadsDir/$uniqueId.m4a";
     // download stream
     $ch = curl_init($streamUrl);
-    $fp = fopen($outputFile, 'w+');
+    $fp = fopen($outputFile, 'wb');
+    if ($fp === false) {
+        curl_close($ch);
+        http_response_code(500);
+        die(json_encode(['error' => 'Unable to create temporary download file']));
+    }
     curl_setopt($ch, CURLOPT_FILE, $fp);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 300);
@@ -393,78 +426,91 @@ if ($platform === 'audiomack') {
 }
 
 // --------------------
-// FORMAT SELECTION (Optimized for speed)
+// FORMAT SELECTION
 // --------------------
-switch ($quality) {
-    case "360p":
-        $format = "best[height<=360]";
-        break;
-    case "720p":
-        $format = "best[height<=720]";
-        break;
-    case "1080p":
-        $format = "best[height<=1080]";
-        break;
-    default:
-        $format = "best";
+if (!in_array($type, ['audio', 'video'], true)) {
+    http_response_code(400);
+    header('Content-Type: application/json');
+    echo json_encode(['error' => 'Unsupported download type']);
+    exit;
 }
 
-if ($type === "audio") {
-    $format = "bestaudio";
-    $ext = "mp3";
+$qualityFormats = [
+    '360p'  => 'bestvideo[height<=360]+bestaudio/best[height<=360]/best',
+    '720p'  => 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
+    '1080p' => 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
+];
+
+if ($type === 'audio') {
+    $format = 'bestaudio/best';
+    $ext = 'mp3';
 } else {
-    $ext = "mp4";
+    $format = $qualityFormats[$quality] ?? 'bestvideo+bestaudio/best';
+    $ext = 'mp4';
 }
 
 // --------------------
 // GENERATE OUTPUT PATH
 // --------------------
-$uniqueId = uniqid("yt_") . "_" . $videoId;
-$outputFile = "$downloadsDir/$uniqueId.$ext";
-$url = "https://www.youtube.com/watch?v=$videoId";
-
-// --------------------
-// BUILD COMMAND (Optimized for speed)
-// --------------------
-if ($type === "audio") {
-    // For audio: extract audio and convert to MP3
-    $command = "\"$yt_dlp\" -x --audio-format mp3 --audio-quality 0 -f bestaudio -o \"$outputFile\" --no-playlist --no-check-certificate --quiet \"$url\" 2>&1";
-} else {
-    // For video: download best quality in requested resolution
-    $command = "\"$yt_dlp\" -f \"$format\" -o \"$outputFile\" --no-playlist --no-check-certificate --quiet --merge-output-format mp4 \"$url\" 2>&1";
-}
-
-// Log the command for debugging (optional)
-error_log("Executing: " . $command);
+$uniqueId = bin2hex(random_bytes(12)) . '_' . $videoId;
+$outputFile = $downloadsDir . '/' . $uniqueId . '.' . $ext;
+$url = 'https://www.youtube.com/watch?v=' . rawurlencode($videoId);
 
 // --------------------
 // EXECUTE DOWNLOAD
 // --------------------
-exec($command, $output, $status);
+$output = [];
+$status = 1;
 
-// Check if download was successful
-if (!file_exists($outputFile) || filesize($outputFile) < 1024) {
-    // Try alternative format if first attempt failed
-    if ($type === "video") {
-        $altCommand = "\"$yt_dlp\" -f best -o \"$outputFile\" --no-playlist --no-check-certificate --quiet \"$url\" 2>&1";
-        exec($altCommand, $altOutput, $altStatus);
-    } elseif ($type === "audio") {
-        $altCommand = "\"$yt_dlp\" -f bestaudio -o \"$outputFile\" --no-playlist --no-check-certificate --quiet \"$url\" 2>&1";
-        exec($altCommand, $altOutput, $altStatus);
-    }
+$arguments = [
+    '--no-playlist',
+    '--no-warnings',
+    '--no-update',
+    '--newline',
+    '--restrict-filenames',
+    '--ffmpeg-location',
+    '/usr/bin',
+    '-f',
+    $format,
+    '-o',
+    $outputFile,
+    $url
+];
+
+if ($type === 'audio') {
+    array_splice($arguments, 0, 0, [
+        '-x',
+        '--audio-format',
+        'mp3',
+        '--audio-quality',
+        '5'
+    ]);
+} else {
+    array_splice($arguments, 0, 0, [
+        '--merge-output-format',
+        'mp4'
+    ]);
 }
 
-// Final verification
-if (!file_exists($outputFile) || filesize($outputFile) < 1024) {
+runYtDlp($arguments, $output, $status);
+
+if ($status !== 0 || !is_file($outputFile) || filesize($outputFile) < 1024) {
+    @unlink($outputFile);
+
     http_response_code(500);
-    $errorMsg = "Download failed. Command output: " . implode("\n", $output);
-    error_log($errorMsg);
-    
-    if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest') {
+    $details = implode("\n", $output);
+    error_log('yt-dlp download failed (exit ' . $status . '): ' . $details);
+
+    if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) &&
+        strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
         header('Content-Type: application/json');
-        echo json_encode(['error' => 'Download failed', 'details' => $errorMsg]);
+        echo json_encode([
+            'error' => 'Download failed',
+            'details' => $details
+        ], JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
     } else {
-        die("Download failed! Please try again. Error: " . htmlspecialchars($errorMsg));
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Download failed. Please try again.';
     }
     exit;
 }
@@ -472,7 +518,10 @@ if (!file_exists($outputFile) || filesize($outputFile) < 1024) {
 // --------------------
 // STREAM TO BROWSER (Optimized for speed)
 // --------------------
-$fileName = $type === 'audio' ? "audio_$videoId.mp3" : "video_$videoId.mp4";
+$safeDownloadId = preg_replace('/[^a-zA-Z0-9_-]/', '', $videoId);
+$fileName = $type === 'audio'
+    ? "audio_{$safeDownloadId}.mp3"
+    : "video_{$safeDownloadId}.mp4";
 
 // Clear output buffers
 while (ob_get_level()) ob_end_clean();
@@ -495,12 +544,17 @@ if ($handle) {
         flush();
     }
     fclose($handle);
+} else {
+    error_log('Unable to open completed download for streaming: ' . $outputFile);
+    @unlink($outputFile);
+    http_response_code(500);
+    exit('Unable to stream the completed download.');
 }
 
 // --------------------
-// CLEAN UP (optional - you can comment this out if you want to keep files)
+// CLEAN UP
 // --------------------
-unlink($outputFile);
+@unlink($outputFile);
 exit;
 
 // --------------------
